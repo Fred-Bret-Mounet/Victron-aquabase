@@ -1,0 +1,237 @@
+#!/bin/bash
+# dbus-aquabase setup — install / uninstall on Venus OS (Raspberry Pi).
+#
+# Usage:
+#   ./setup install [<bluetooth-mac>]
+#   ./setup uninstall
+#   ./setup status
+#
+# Drops a runit service into /service/dbus-aquabase that launches the
+# Python bridge from /data/Aquabase-watermaker. Compatible with kwindrem's
+# SetupHelper (when present) but does not require it.
+
+set -eu
+
+PKG_NAME="Aquabase-watermaker"
+SVC_NAME="dbus-aquabase"
+INSTALL_DIR="/data/${PKG_NAME}"
+SERVICE_LINK="/service/${SVC_NAME}"
+SETTINGS_OWNER="dbus-aquabase-setup"
+SETTINGS_PATH="/Settings/Watermaker/Aquabase/MacAddress"
+
+here="$(cd "$(dirname "$0")" && pwd)"
+
+require_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "must be run as root (try: sudo $0 $*)" >&2
+        exit 1
+    fi
+}
+
+install_files() {
+    echo "→ installing into ${INSTALL_DIR}"
+    mkdir -p "${INSTALL_DIR}"
+    if command -v rsync >/dev/null 2>&1; then
+        rsync -a --delete --exclude='.git' --exclude='__pycache__' \
+              "${here}/" "${INSTALL_DIR}/"
+    else
+        cp -a "${here}/." "${INSTALL_DIR}/"
+    fi
+    chown -R root:root "${INSTALL_DIR}"
+    chmod +x "${INSTALL_DIR}/service/run" "${INSTALL_DIR}/service/log/run" \
+             "${INSTALL_DIR}/setup"
+}
+
+check_vendored() {
+    for f in ext/velib_python/vedbus.py ext/bleak/__init__.py; do
+        if [ ! -f "${INSTALL_DIR}/${f}" ]; then
+            echo "missing vendored dep: ${INSTALL_DIR}/${f}" >&2
+            echo "(re-run rsync from the development machine)" >&2
+            exit 1
+        fi
+    done
+    echo "→ vendored bleak + velib_python present"
+}
+
+check_system_deps() {
+    python3 -c "import dbus; import dbus_fast" 2>/dev/null || {
+        echo "missing system Python deps: dbus or dbus_fast" >&2
+        echo "  opkg install python3-dbus python3-dbus-fast" >&2
+        exit 1
+    }
+    echo "→ system Python deps OK (dbus, dbus_fast)"
+}
+
+GUI_QML_DIR="/opt/victronenergy/gui/qml"
+PAGEMAIN="${GUI_QML_DIR}/PageMain.qml"
+MARKER="// aquabase-watermaker"
+
+GUIV2_DELEGATE_DIR="/opt/victronenergy/gui-v2/Victron/VenusOS/pages/settings/devicelist/delegates"
+GUIV2_APPS_AVAILABLE="/data/apps/available/aquabase-watermaker"
+GUIV2_APPS_ENABLED="/data/apps/enabled/aquabase-watermaker"
+
+install_gui_legacy() {
+    # Legacy gui (Pi etc.) — install QML page + patch PageMain.qml.
+    # Detect by service entry: only the legacy gui has /service/gui;
+    # gui-v2 hosts use /service/start-gui instead, even if the legacy
+    # binary still ships in /opt.
+    [ -d "${GUI_QML_DIR}" ] || return 0
+    [ -e /service/gui ] || return 0
+    cp "${INSTALL_DIR}/gui/PageWatermaker.qml" "${GUI_QML_DIR}/PageWatermaker.qml"
+    echo "→ legacy gui: installed PageWatermaker.qml"
+
+    if grep -q "${MARKER}" "${PAGEMAIN}" 2>/dev/null; then
+        echo "→ legacy gui: PageMain.qml already patched"
+        return
+    fi
+    [ -f "${PAGEMAIN}.preaqua" ] || cp "${PAGEMAIN}" "${PAGEMAIN}.preaqua"
+    python3 - "${PAGEMAIN}" <<'PY'
+import sys, re
+p = sys.argv[1]; src = open(p).read()
+m = re.search(r'(\n\t+MbSubMenu\s*\{\s*\n\t+id:\s*menuNotifications)', src) \
+    or re.search(r'(\n\t+MbSubMenu\s*\{\s*\n\t+description:\s*qsTr\("Notifications"\))', src)
+if not m:
+    sys.exit("anchor not found in PageMain.qml")
+block = ("\n\t\t\t// aquabase-watermaker\n"
+         "\t\t\tMbSubMenu {\n"
+         "\t\t\t\tdescription: qsTr(\"Watermaker\")\n"
+         "\t\t\t\tsubpage: Component { PageWatermaker { } }\n"
+         "\t\t\t}\n")
+open(p, "w").write(src[:m.start()] + block + src[m.start():])
+print("patched")
+PY
+    echo "→ legacy gui: patched ${PAGEMAIN} (backup: ${PAGEMAIN}.preaqua)"
+}
+
+install_gui_v2() {
+    # Modern gui-v2 (Cerbo etc.) — drop in plugin manifest + delegate file
+    [ -d "/opt/victronenergy/gui-v2" ] || return 0
+    if [ ! -f "${INSTALL_DIR}/plugin/aquabase-watermaker.json" ]; then
+        echo "→ gui-v2: no compiled plugin manifest, skipping"
+        return 0
+    fi
+    mkdir -p "${GUIV2_APPS_AVAILABLE}/gui-v2"
+    cp "${INSTALL_DIR}/plugin/aquabase-watermaker.json" \
+       "${GUIV2_APPS_AVAILABLE}/gui-v2/aquabase-watermaker.json"
+    [ -L "${GUIV2_APPS_ENABLED}" ] || ln -sf "${GUIV2_APPS_AVAILABLE}" "${GUIV2_APPS_ENABLED}"
+    echo "→ gui-v2: plugin manifest installed and enabled"
+    if [ -f "${INSTALL_DIR}/plugin/DeviceListDelegate_watermaker.qml" ] \
+       && [ -d "${GUIV2_DELEGATE_DIR}" ]; then
+        cp "${INSTALL_DIR}/plugin/DeviceListDelegate_watermaker.qml" \
+           "${GUIV2_DELEGATE_DIR}/DeviceListDelegate_watermaker.qml"
+        echo "→ gui-v2: device-list delegate installed"
+    fi
+}
+
+install_gui() {
+    install_gui_legacy
+    install_gui_v2
+}
+
+restart_gui() {
+    rm -rf /.cache/gui/qmlcache 2>/dev/null
+    if [ -e /service/gui ]; then
+        echo "→ restarting legacy gui service"
+        svc -t /service/gui
+    fi
+    if [ -e /service/start-gui ]; then
+        echo "→ restarting gui-v2 (start-gui)"
+        svc -t /service/start-gui
+    fi
+}
+
+remove_gui() {
+    # legacy gui
+    rm -f "${GUI_QML_DIR}/PageWatermaker.qml"
+    if [ -f "${PAGEMAIN}.preaqua" ]; then
+        cp "${PAGEMAIN}.preaqua" "${PAGEMAIN}"
+        rm -f "${PAGEMAIN}.preaqua"
+        echo "→ legacy gui: restored PageMain.qml"
+    fi
+    # gui-v2
+    rm -f "${GUIV2_DELEGATE_DIR}/DeviceListDelegate_watermaker.qml"
+    rm -f "${GUIV2_ENABLED:-${GUIV2_APPS_ENABLED}}"
+    rm -rf "${GUIV2_APPS_AVAILABLE}"
+}
+
+write_mac_setting() {
+    local mac="$1"
+    [ -z "${mac}" ] && return 0
+    echo "→ writing MAC ${mac} to ${SETTINGS_PATH}"
+    dbus -y com.victronenergy.settings / AddSettings \
+        "%[{\"path\": \"${SETTINGS_PATH}\", \"default\": \"\"}]" >/dev/null || true
+    dbus -y com.victronenergy.settings "${SETTINGS_PATH}" SetValue "${mac}" >/dev/null
+}
+
+install_service() {
+    echo "→ enabling service ${SVC_NAME}"
+    if [ -L "${SERVICE_LINK}" ] || [ -e "${SERVICE_LINK}" ]; then
+        svc -d "${SERVICE_LINK}" 2>/dev/null || true
+        rm -f "${SERVICE_LINK}"
+    fi
+    ln -s "${INSTALL_DIR}/service" "${SERVICE_LINK}"
+    # rc.local survives firmware updates
+    if ! grep -q "Aquabase-watermaker/setup reinstall" /data/rc.local 2>/dev/null; then
+        {
+            [ -f /data/rc.local ] && cat /data/rc.local
+            echo "${INSTALL_DIR}/setup reinstall >/var/log/aquabase-reinstall.log 2>&1"
+        } > /data/rc.local.new
+        mv /data/rc.local.new /data/rc.local
+        chmod +x /data/rc.local
+    fi
+}
+
+remove_service() {
+    if [ -L "${SERVICE_LINK}" ] || [ -e "${SERVICE_LINK}" ]; then
+        svc -d "${SERVICE_LINK}" 2>/dev/null || true
+        rm -f "${SERVICE_LINK}"
+    fi
+    if [ -f /data/rc.local ]; then
+        sed -i "\|${INSTALL_DIR}/setup reinstall|d" /data/rc.local
+    fi
+}
+
+case "${1:-}" in
+    install)
+        require_root "$@"
+        install_files
+        check_vendored
+        check_system_deps
+        write_mac_setting "${2:-}"
+        install_service
+        install_gui
+        restart_gui
+        echo "✓ installed. tail logs with: tail -F /var/log/dbus-aquabase/current"
+        ;;
+    reinstall)
+        # Used by rc.local on boot — service link only, no pip install.
+        require_root "$@"
+        install_service
+        ;;
+    uninstall)
+        require_root "$@"
+        remove_service
+        remove_gui
+        restart_gui
+        echo "✓ removed service link + GUI patches. files left in ${INSTALL_DIR}."
+        ;;
+    purge)
+        require_root "$@"
+        remove_service
+        remove_gui
+        restart_gui
+        rm -rf "${INSTALL_DIR}"
+        echo "✓ purged ${INSTALL_DIR}"
+        ;;
+    status)
+        if [ -L "${SERVICE_LINK}" ]; then
+            svstat "${SERVICE_LINK}" || true
+        else
+            echo "not installed"
+        fi
+        ;;
+    *)
+        echo "usage: $0 {install [<mac>]|uninstall|purge|status|reinstall}" >&2
+        exit 2
+        ;;
+esac

@@ -1,0 +1,7 @@
+; Optional fallback config. The MAC address is normally read from the
+; Venus settings dbus path /Settings/Watermaker/Aquabase/MacAddress.
+; This file is currently not consumed by the service — kept as a template
+; for a future config-file fallback.
+
+[ble]
+mac = AA:BB:CC:DD:EE:FF

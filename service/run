@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+cd /data/Aquabase-watermaker || exit 1
+exec /usr/bin/python3 dbus_aquabase.py
