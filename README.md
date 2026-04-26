@@ -5,7 +5,7 @@ families) over BLE. Publishes `com.victronenergy.watermaker.aquabase` so the
 unit shows up on the GX touchscreen and on VRM.
 
 Reverse-engineered from the official Aquabase 0.0.1 Android app and validated
-against a live FIJI Premium 65 (SN 10977).
+against a live FIJI Premium 65.
 
 ## Status
 

@@ -1,7 +1,7 @@
 """Aquabase BLE wire protocol — UUIDs, opcodes, decoders.
 
 Reverse-engineered from the Aquabase 0.0.1 Android app and a live FIJI
-Premium 65 (SN 10977). The firmware exposes five live values: a state
+Premium 65. The firmware exposes five live values: a state
 byte, the operating-hour counter, a salinity reading, a salinity
 threshold, and the produced-water flow rate.
 """
