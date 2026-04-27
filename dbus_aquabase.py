@@ -28,7 +28,7 @@ from settingsdevice import SettingsDevice            # noqa: E402
 from aquabase import protocol as P                   # noqa: E402
 from aquabase.ble import BleLink                     # noqa: E402
 
-VERSION = "1.3.0"
+VERSION = "1.3.1"
 SERVICE_NAME = "com.victronenergy.watermaker.aquabase"
 SETTINGS_PREFIX = "/Settings/Watermaker/Aquabase"
 ALERT_HOLD_SECONDS = 60
@@ -108,6 +108,14 @@ class AquabaseService:
             return False
         if self._svc["/Connected"] != 1:
             log.warning("/Mode %d ignored: not connected to watermaker", mode)
+            return False
+        # Only allow transitions that match the QML radio-group's enable
+        # rules: from a non-stopped state, the only valid command is Stop.
+        # This guards CLI / MQTT / external writes that bypass the UI.
+        current_state = int(self._svc["/State"] or 0)
+        if current_state != 0 and mode != 0:
+            log.warning("/Mode %d ignored: current /State=%d, only Stop (0) is allowed",
+                        mode, current_state)
             return False
         name, payload = cmd_map[mode]
         log.info("dispatching command %s (mode=%d) via BLE", name, mode)

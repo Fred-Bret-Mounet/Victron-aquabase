@@ -13,12 +13,17 @@ Page {
 				text: "Command"
 				dataItem.uid: root.serviceUid + "/Mode"
 				preferredVisible: dataItem.valid && connectedItem.value === 1
+				// Only allow transitions that make sense from the current
+				// reported /State: stopped → Start or Wash; running or
+				// washing → Stop. The current state stays selectable so
+				// the picker visibly reflects what the device is doing.
 				optionModel: [
-					{ display: "Stop",  value: 0 },
-					{ display: "Start", value: 1 },
-					{ display: "Wash",  value: 2 },
+					{ display: "Stop",  value: 0, readOnly: stateItem.value === 0 },
+					{ display: "Start", value: 1, readOnly: stateItem.value !== 0 },
+					{ display: "Wash",  value: 2, readOnly: stateItem.value !== 0 },
 				]
 				VeQuickItem { id: connectedItem; uid: root.serviceUid + "/Connected" }
+				VeQuickItem { id: stateItem;     uid: root.serviceUid + "/State" }
 			}
 			ListText {
 				text: "Connection"
