@@ -25,11 +25,15 @@ against a live FIJI Premium 65.
 
 ## Screenshots
 
+The bridge surfaces the watermaker on the GX touchscreen (and the LAN
+Remote Console) at three different routes:
+
 | | |
 |---|---|
 | **Settings → Devices → Watermaker** — read-only telemetry plus the writable command at the top. ![device page](docs/screenshots/device-page.png) | **Command picker** — Stop / Start / Wash, sends `10 00`, `10 01` or `10 02` over BLE. ![command](docs/screenshots/command.png) |
+| **Settings → Integrations → UI Plugins** — `aquabase-watermaker` registered as a device-list integration. ![integrations](docs/screenshots/integrations-list.png) | **Settings → Integrations → aquabase-watermaker** — per-event alert toggles wired to the GX Notifications tab. ![settings](docs/screenshots/settings-page.png) |
 
-State-transition alerts on the **Notifications** tab (toggleable per
+State-transition alerts land on the **Notifications** tab (toggleable per
 event, see [Alerts](#alerts)):
 
 ![notifications](docs/screenshots/notifications.png)
