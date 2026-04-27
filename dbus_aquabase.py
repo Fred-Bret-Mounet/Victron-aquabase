@@ -28,7 +28,7 @@ from settingsdevice import SettingsDevice            # noqa: E402
 from aquabase import protocol as P                   # noqa: E402
 from aquabase.ble import BleLink                     # noqa: E402
 
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 SERVICE_NAME = "com.victronenergy.watermaker.aquabase"
 SETTINGS_PREFIX = "/Settings/Watermaker/Aquabase"
 ALERT_HOLD_SECONDS = 60
@@ -41,8 +41,13 @@ class AquabaseService:
         self._svc = VeDbusService(SERVICE_NAME, bus=bus, register=False)
         self._settings = settings
         self._last_state: int | None = None
+        self._link: "BleLink | None" = None
         self._add_paths()
         self._svc.register()
+
+    def attach_link(self, link: "BleLink") -> None:
+        """Wire up the BLE writer used by /Mode write callbacks."""
+        self._link = link
 
     def _add_paths(self) -> None:
         s = self._svc
@@ -58,6 +63,11 @@ class AquabaseService:
         s.add_path("/Connected",           0)
 
         s.add_path("/State",               0)        # 0=stopped 1=running 2=washing
+        # Writable command path. UI sets 0/1/2; bridge sends POWER_OFF/POWER_ON/WASH.
+        # The value snaps back to /State on the next streaming frame, which is the
+        # behaviour the QML ListRadioButtonGroup expects.
+        s.add_path("/Mode", 0, writeable=True,
+                   onchangecallback=self._on_mode_change)
         s.add_path("/CurrentFlow",         0)        # L/h
         s.add_path("/Salinity",            0)        # ppm
         s.add_path("/SalinityThreshold",   0)        # ppm
@@ -71,6 +81,34 @@ class AquabaseService:
         for name in ("StartEvent", "StopEvent", "WashEvent"):
             s.add_path(f"/Alarms/{name}/State", 0)
             s.add_path(f"/Alarms/{name}/Description", "")
+
+    # ─── command callback (GLib thread, dispatches to BLE thread) ────────────
+    def _on_mode_change(self, path: str, value) -> bool:
+        try:
+            mode = int(value)
+        except (TypeError, ValueError):
+            log.warning("/Mode rejected: non-integer value %r", value)
+            return False
+        cmd_map = {
+            0: ("POWER_OFF", P.CMD_POWER_OFF),
+            1: ("POWER_ON",  P.CMD_POWER_ON),
+            2: ("WASH",      P.CMD_WASH),
+        }
+        if mode not in cmd_map:
+            log.warning("/Mode rejected: unknown value %d", mode)
+            return False
+        if not self._link:
+            log.warning("/Mode %d ignored: BLE link not attached yet", mode)
+            return False
+        if self._svc["/Connected"] != 1:
+            log.warning("/Mode %d ignored: not connected to watermaker", mode)
+            return False
+        name, payload = cmd_map[mode]
+        log.info("dispatching command %s (mode=%d) via BLE", name, mode)
+        self._link.submit(self._link.write(payload))
+        # Accept the dbus write so the value sticks until the next streaming
+        # frame overwrites it from the device-reported /State.
+        return True
 
     # ─── update sinks (called from GLib thread) ──────────────────────────────
     def set_connected(self, connected: bool) -> None:
@@ -111,6 +149,10 @@ class AquabaseService:
             else:
                 new_state = 0
             self._svc["/State"] = new_state
+            # Keep /Mode in sync with reported /State so the radio-group
+            # snaps back if the device disagrees with the last write.
+            if self._svc["/Mode"] != new_state:
+                self._svc["/Mode"] = new_state
             self._maybe_alert(new_state)
         if f.horameter is not None:
             self._svc["/HoursOperation"] = f.horameter
@@ -195,6 +237,7 @@ def main() -> int:
         on_completion=completion,
         on_connected=connected,
     )
+    svc.attach_link(link)
     worker = threading.Thread(target=link.run, name="aquabase-ble", daemon=True)
     worker.start()
 

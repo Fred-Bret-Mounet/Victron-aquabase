@@ -9,6 +9,17 @@ Page {
 
 	GradientListView {
 		model: VisibleItemModel {
+			ListRadioButtonGroup {
+				text: "Command"
+				dataItem.uid: root.serviceUid + "/Mode"
+				preferredVisible: dataItem.valid && connectedItem.value === 1
+				optionModel: [
+					{ display: "Stop",  value: 0 },
+					{ display: "Start", value: 1 },
+					{ display: "Wash",  value: 2 },
+				]
+				VeQuickItem { id: connectedItem; uid: root.serviceUid + "/Connected" }
+			}
 			ListText {
 				text: "Connection"
 				dataItem.uid: root.serviceUid + "/Connected"
