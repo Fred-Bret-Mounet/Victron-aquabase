@@ -14,11 +14,25 @@ against a live FIJI Premium 65.
   most-recent event.
 - ✅ Auto-reconnect with configurable retry interval.
 - ✅ Toggleable alerts on start / stop / wash, surfaced as
-  `/Alarms/{StartEvent,StopEvent,WashEvent}` on the bridge's dbus service.
+  `/Alarms/{StartEvent,StopEvent,WashEvent}` on the bridge's dbus service
+  *and* injected onto `com.victronenergy.platform/Notifications/Inject` so
+  they appear on the GX **Notifications** tab.
+- ✅ Writable `/Mode` (Stop / Start / Wash) command rendered as a
+  three-option picker on the device page.
 - ✅ Custom QML page on the **Cerbo GX** touchscreen via the official `gui-v2`
-  plugin system (Settings → Integrations → UI Plugins → aquabase-watermaker).
-- ⏳ Writable controls (start / stop / wash, auto-stop config) — wired in the
-  BLE layer but not exposed on dbus until reconnect behavior is fully proven.
+  plugin system (Settings → Devices → Watermaker, plus
+  Settings → Integrations → UI Plugins → aquabase-watermaker).
+
+## Screenshots
+
+| | |
+|---|---|
+| **Settings → Devices → Watermaker** — read-only telemetry plus the writable command at the top. ![device page](docs/screenshots/device-page.png) | **Command picker** — Stop / Start / Wash, sends `10 00`, `10 01` or `10 02` over BLE. ![command](docs/screenshots/command.png) |
+
+State-transition alerts on the **Notifications** tab (toggleable per
+event, see [Alerts](#alerts)):
+
+![notifications](docs/screenshots/notifications.png)
 
 ## Hardware support
 
