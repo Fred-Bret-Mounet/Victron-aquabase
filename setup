@@ -121,6 +121,15 @@ install_gui_v2() {
            "${GUIV2_DELEGATE_DIR}/DeviceListDelegate_watermaker.qml"
         echo "→ gui-v2: device-list delegate installed"
     fi
+    # Publish the manifest to MQTT so the WASM (browser) gui-v2 can load it.
+    if python3 -c "import paho.mqtt" 2>/dev/null; then
+        python3 "${INSTALL_DIR}/publish_gui_plugin.py" \
+            --manifest "${INSTALL_DIR}/plugin/aquabase-watermaker.json" \
+            --name aquabase-watermaker 2>&1 | sed 's/^/   /' || \
+            echo "   (publish failed; the touchscreen plugin is unaffected)"
+    else
+        echo "   (skip MQTT publish: paho.mqtt not available)"
+    fi
 }
 
 install_gui() {
@@ -150,8 +159,15 @@ remove_gui() {
     fi
     # gui-v2
     rm -f "${GUIV2_DELEGATE_DIR}/DeviceListDelegate_watermaker.qml"
-    rm -f "${GUIV2_ENABLED:-${GUIV2_APPS_ENABLED}}"
+    rm -f "${GUIV2_APPS_ENABLED}"
     rm -rf "${GUIV2_APPS_AVAILABLE}"
+    # Clear the MQTT-published plugin so the WASM browser stops loading it.
+    if [ -f "${INSTALL_DIR}/publish_gui_plugin.py" ] \
+       && python3 -c "import paho.mqtt" 2>/dev/null; then
+        python3 "${INSTALL_DIR}/publish_gui_plugin.py" \
+            --manifest "${INSTALL_DIR}/plugin/aquabase-watermaker.json" \
+            --name aquabase-watermaker --clear 2>&1 | sed 's/^/   /' || true
+    fi
 }
 
 write_mac_setting() {
