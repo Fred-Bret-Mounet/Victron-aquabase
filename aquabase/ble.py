@@ -22,6 +22,7 @@ StreamingCb  = Callable[[P.StreamingFrame], None]
 FactoryCb    = Callable[[P.FactoryFrame], None]
 HistoryCb    = Callable[[P.HistoryEntry], None]
 CompletionCb = Callable[[P.CompletionFrame], None]
+AutoStopCb   = Callable[[P.AutoStopFrame], None]
 ConnectedCb  = Callable[[bool], None]
 
 
@@ -34,6 +35,7 @@ class BleLink:
         on_history: HistoryCb,
         on_completion: CompletionCb,
         on_connected: ConnectedCb,
+        on_auto_stop: AutoStopCb | None = None,
         scan_timeout: float = 8.0,
         retry_delay: float = 5.0,
     ):
@@ -42,6 +44,7 @@ class BleLink:
         self.on_factory = on_factory
         self.on_history = on_history
         self.on_completion = on_completion
+        self.on_auto_stop = on_auto_stop
         self.on_connected = on_connected
         self.scan_timeout = scan_timeout
         self.retry_delay = retry_delay
@@ -96,6 +99,9 @@ class BleLink:
                 self.on_history(result)
             elif isinstance(result, P.CompletionFrame):
                 self.on_completion(result)
+            elif isinstance(result, P.AutoStopFrame):
+                if self.on_auto_stop is not None:
+                    self.on_auto_stop(result)
         except Exception:
             log.exception("on_params callback failed")
 
@@ -133,6 +139,8 @@ class BleLink:
             self.on_connected(True)
             log.info("connected; sending READ_ALL")
             await client.write_gatt_char(P.CHR_WRITE_PARAMS, P.CMD_READ_ALL, response=False)
+            await asyncio.sleep(0.2)
+            await client.write_gatt_char(P.CHR_WRITE_PARAMS, P.CMD_READ_AUTOSTOP, response=False)
 
             try:
                 while client.is_connected and not self._stop.is_set():

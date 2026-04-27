@@ -23,6 +23,7 @@ CMD_POWER_OFF     = bytes.fromhex("1000")
 CMD_POWER_ON      = bytes.fromhex("1001")
 CMD_WASH          = bytes.fromhex("1002")
 CMD_READ_ALL      = bytes.fromhex("00524541442030")  # b"\x00READ 0"
+CMD_READ_AUTOSTOP = bytes.fromhex("00524541442032")  # b"\x00READ 2"
 CMD_READ_HISTORY  = bytes.fromhex("00524541442035")  # b"\x00READ 5"
 OP_UPDATE_STOP    = 0x02
 
@@ -101,6 +102,13 @@ class CompletionFrame:
     raw_status: int
 
 
+@dataclass
+class AutoStopFrame:
+    enabled: bool
+    by_volume: bool   # True = volume in L, False = time in min
+    target: int       # uint32
+
+
 # ─── Decoders ─────────────────────────────────────────────────────────────────
 def decode_streaming(buf: bytes) -> StreamingFrame | None:
     if not buf:
@@ -118,10 +126,16 @@ def decode_streaming(buf: bytes) -> StreamingFrame | None:
 
 
 def decode_parameters(buf: bytes):
-    """Return one of: FactoryFrame, HistoryEntry, CompletionFrame, ('raw', op, payload)."""
+    """Return one of: FactoryFrame, HistoryEntry, CompletionFrame, AutoStopFrame, ('raw', op, payload)."""
     if not buf:
         return None
     op = buf[0]
+    if op == 0x02 and len(buf) >= 7:
+        return AutoStopFrame(
+            enabled=bool(buf[1]),
+            by_volume=bool(buf[2]),
+            target=int.from_bytes(buf[3:7], "big"),
+        )
     if op == 0x04 and len(buf) >= 8:
         return FactoryFrame(
             model_id=buf[1],

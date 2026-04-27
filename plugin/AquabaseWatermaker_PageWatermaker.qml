@@ -24,6 +24,33 @@ DeviceListPluginPage {
 				VeQuickItem { id: connectedItem; uid: root.device.serviceUid + "/Connected" }
 				VeQuickItem { id: stateItem;     uid: root.device.serviceUid + "/State" }
 			}
+			ListSwitch {
+				text: "Auto-stop"
+				dataItem.uid: root.device.serviceUid + "/AutoStop/Enabled"
+				preferredVisible: dataItem.valid && connectedItem.value === 1
+			}
+			ListRadioButtonGroup {
+				text: "Auto-stop mode"
+				dataItem.uid: root.device.serviceUid + "/AutoStop/Mode"
+				preferredVisible: dataItem.valid && connectedItem.value === 1
+					&& autoStopEnabledItem.value === 1
+				optionModel: [
+					{ display: "Time (min)",  value: 0 },
+					{ display: "Volume (L)", value: 1 },
+				]
+				VeQuickItem { id: autoStopEnabledItem; uid: root.device.serviceUid + "/AutoStop/Enabled" }
+			}
+			ListSpinBox {
+				text: "Auto-stop target"
+				dataItem.uid: root.device.serviceUid + "/AutoStop/Target"
+				preferredVisible: dataItem.valid && connectedItem.value === 1
+					&& autoStopEnabledItem.value === 1
+				from: 1
+				to: 9999
+				stepSize: 1
+				suffix: autoStopModeItem.value === 1 ? " L" : " min"
+				VeQuickItem { id: autoStopModeItem; uid: root.device.serviceUid + "/AutoStop/Mode" }
+			}
 			ListText {
 				text: "Connection"
 				dataItem.uid: root.device.serviceUid + "/Connected"

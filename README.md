@@ -19,6 +19,11 @@ against a live FIJI Premium 65.
   they appear on the GX **Notifications** tab.
 - ✅ Writable `/Mode` (Stop / Start / Wash) command rendered as a
   three-option picker on the device page.
+- ✅ Writable auto-stop config (firmware-managed countdown by **time** in
+  minutes or **volume** in litres) — the bridge sends
+  `UPDATE_AUTOMATIC_STOP` over BLE and the watermaker shuts itself down
+  when the threshold is reached. No host-side timer to lose on a reboot
+  or BLE blip.
 - ✅ Custom QML page on the **Cerbo GX** touchscreen via the official `gui-v2`
   plugin system (Settings → Devices → Watermaker, plus
   Settings → Integrations → UI Plugins → aquabase-watermaker).
@@ -32,6 +37,7 @@ Remote Console) at three different routes:
 |---|---|
 | **Settings → Devices → Watermaker** — read-only telemetry plus the writable command at the top. ![device page](docs/screenshots/device-page.png) | **Command picker** — Stop / Start / Wash, sends `10 00`, `10 01` or `10 02` over BLE. ![command](docs/screenshots/command.png) |
 | **Settings → Integrations → UI Plugins** — `aquabase-watermaker` registered as a device-list integration. ![integrations](docs/screenshots/integrations-list.png) | **Settings → Integrations → aquabase-watermaker** — per-event alert toggles wired to the GX Notifications tab. ![settings](docs/screenshots/settings-page.png) |
+| **Auto-stop** — firmware-managed shutdown after a configurable time (minutes) or volume (litres). ![auto-stop](docs/screenshots/auto-stop.png) | |
 
 State-transition alerts land on the **Notifications** tab (toggleable per
 event, see [Alerts](#alerts)):
@@ -137,6 +143,40 @@ on the Cerbo touchscreen panel as of Venus v3.72. The toggles still work —
 you can subscribe externally over MQTT and route to Pushover / NTFY / email
 via Node-RED. See [Caveats](#caveats).
 
+## Auto-stop
+
+The watermaker firmware has a built-in auto-stop feature: once enabled,
+the unit shuts itself off automatically after either a fixed time
+(minutes) or a fixed produced-water volume (litres). The bridge exposes
+this as three writable dbus paths under
+`com.victronenergy.watermaker.aquabase` and as three rows on the device
+page (visible in the **Watermaker** screenshot above):
+
+- **Auto-stop** (`/AutoStop/Enabled`) — master on/off switch.
+- **Auto-stop mode** (`/AutoStop/Mode`) — `0` = time (min), `1` = volume (L).
+- **Auto-stop target** (`/AutoStop/Target`) — threshold in the chosen unit.
+
+Writes are folded into a single `UPDATE_AUTOMATIC_STOP` BLE frame
+(opcode `0x02`, see [`BLE_PROTOCOL.md`](BLE_PROTOCOL.md) §5), and the
+device acks with a completion frame. The countdown lives on the
+watermaker, so a Cerbo reboot or BLE drop doesn't restart the timer.
+
+On every connect the bridge sends `READ_AUTOMATIC_STOP` and mirrors the
+device's stored config back into the dbus paths, so the UI always
+reflects what the firmware is going to do — not what the bridge last
+wrote.
+
+Example from a shell:
+
+```sh
+dbus -y com.victronenergy.watermaker.aquabase /AutoStop/Mode    SetValue 0   # time
+dbus -y com.victronenergy.watermaker.aquabase /AutoStop/Target  SetValue 30  # 30 min
+dbus -y com.victronenergy.watermaker.aquabase /AutoStop/Enabled SetValue 1   # arm
+```
+
+Then start the watermaker as normal — it will run for 30 minutes and
+stop on its own.
+
 ## Uninstall
 
 ```sh
@@ -191,6 +231,9 @@ Aquabase-watermaker/
 | `/Alarms/StartEvent/{State,Description}` | int / str | start-event alarm |
 | `/Alarms/StopEvent/{State,Description}` | int / str | stop-event alarm |
 | `/Alarms/WashEvent/{State,Description}` | int / str | wash-event alarm |
+| `/AutoStop/Enabled` | int 0/1 (writable) | arm / disarm firmware auto-stop |
+| `/AutoStop/Mode` | int 0/1 (writable) | 0 = time (min), 1 = volume (L) |
+| `/AutoStop/Target` | uint32 (writable) | threshold in the unit selected by `/AutoStop/Mode` |
 
 Settings, under `com.victronenergy.settings`:
 

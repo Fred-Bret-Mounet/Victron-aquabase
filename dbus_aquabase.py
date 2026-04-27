@@ -28,7 +28,7 @@ from settingsdevice import SettingsDevice            # noqa: E402
 from aquabase import protocol as P                   # noqa: E402
 from aquabase.ble import BleLink                     # noqa: E402
 
-VERSION = "1.3.1"
+VERSION = "1.4.0"
 SERVICE_NAME = "com.victronenergy.watermaker.aquabase"
 SETTINGS_PREFIX = "/Settings/Watermaker/Aquabase"
 ALERT_HOLD_SECONDS = 60
@@ -84,6 +84,17 @@ class AquabaseService:
         s.add_path("/LastEventCode",       0)
         s.add_path("/LastEventDescription", "")
 
+        # Auto-stop config (firmware-managed countdown). Writes here are
+        # combined into a single UPDATE_AUTOMATIC_STOP frame that the device
+        # acks with a completion. /AutoStop/Mode is 0=time(min), 1=volume(L);
+        # /AutoStop/Target is the threshold in those units.
+        s.add_path("/AutoStop/Enabled", 0, writeable=True,
+                   onchangecallback=self._on_auto_stop_change)
+        s.add_path("/AutoStop/Mode",    0, writeable=True,
+                   onchangecallback=self._on_auto_stop_change)
+        s.add_path("/AutoStop/Target",  0, writeable=True,
+                   onchangecallback=self._on_auto_stop_change)
+
         for name in ("StartEvent", "StopEvent", "WashEvent"):
             s.add_path(f"/Alarms/{name}/State", 0)
             s.add_path(f"/Alarms/{name}/Description", "")
@@ -122,6 +133,42 @@ class AquabaseService:
         self._link.submit(self._link.write(payload))
         # Accept the dbus write so the value sticks until the next streaming
         # frame overwrites it from the device-reported /State.
+        return True
+
+    def _on_auto_stop_change(self, path: str, value) -> bool:
+        try:
+            v = int(value)
+        except (TypeError, ValueError):
+            log.warning("%s rejected: non-integer value %r", path, value)
+            return False
+        if path.endswith("/Enabled") and v not in (0, 1):
+            return False
+        if path.endswith("/Mode") and v not in (0, 1):
+            return False
+        if path.endswith("/Target") and (v < 0 or v > 0xFFFFFFFF):
+            return False
+        if not self._link:
+            log.warning("%s ignored: BLE link not attached yet", path)
+            return False
+        if self._svc["/Connected"] != 1:
+            log.warning("%s ignored: not connected to watermaker", path)
+            return False
+        # Rebuild the frame from current sibling values, substituting the
+        # incoming write for the path being changed (the new value is not
+        # committed to /Mode yet at callback time).
+        enabled = bool(self._svc["/AutoStop/Enabled"])
+        by_volume = bool(self._svc["/AutoStop/Mode"])
+        target = int(self._svc["/AutoStop/Target"] or 0)
+        if path.endswith("/Enabled"):
+            enabled = bool(v)
+        elif path.endswith("/Mode"):
+            by_volume = bool(v)
+        elif path.endswith("/Target"):
+            target = v
+        payload = P.encode_update_stop(enabled, by_volume, target)
+        log.info("dispatching UPDATE_AUTOMATIC_STOP enabled=%d by_volume=%d target=%d",
+                 enabled, by_volume, target)
+        self._link.submit(self._link.write(payload))
         return True
 
     # ─── update sinks (called from GLib thread) ──────────────────────────────
@@ -203,6 +250,11 @@ class AquabaseService:
         self._svc["/Serial"]         = str(f.serial)
         self._svc["/CommissionDate"] = f.date_str
 
+    def apply_auto_stop(self, f: P.AutoStopFrame) -> None:
+        self._svc["/AutoStop/Enabled"] = 1 if f.enabled else 0
+        self._svc["/AutoStop/Mode"]    = 1 if f.by_volume else 0
+        self._svc["/AutoStop/Target"]  = f.target
+
     def apply_history(self, e: P.HistoryEntry) -> None:
         if e.code == 0:
             return
@@ -224,13 +276,16 @@ def make_bridge(svc: AquabaseService):
     def history(e: P.HistoryEntry) -> None:
         GLib.idle_add(svc.apply_history, e)
 
+    def auto_stop(f: P.AutoStopFrame) -> None:
+        GLib.idle_add(svc.apply_auto_stop, f)
+
     def completion(c: P.CompletionFrame) -> None:
         log.info("device completion: %s (raw=0x%02x)", "OK" if c.ok else "ERROR", c.raw_status)
 
     def connected(b: bool) -> None:
         GLib.idle_add(svc.set_connected, b)
 
-    return streaming, factory, history, completion, connected
+    return streaming, factory, history, auto_stop, completion, connected
 
 
 def main() -> int:
@@ -258,7 +313,7 @@ def main() -> int:
                     SETTINGS_PREFIX)
 
     svc = AquabaseService(bus, settings)
-    streaming, factory, history, completion, connected = make_bridge(svc)
+    streaming, factory, history, auto_stop, completion, connected = make_bridge(svc)
     link = BleLink(
         mac=mac,
         on_streaming=streaming,
@@ -266,6 +321,7 @@ def main() -> int:
         on_history=history,
         on_completion=completion,
         on_connected=connected,
+        on_auto_stop=auto_stop,
     )
     svc.attach_link(link)
     worker = threading.Thread(target=link.run, name="aquabase-ble", daemon=True)
