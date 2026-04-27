@@ -28,16 +28,22 @@ from settingsdevice import SettingsDevice            # noqa: E402
 from aquabase import protocol as P                   # noqa: E402
 from aquabase.ble import BleLink                     # noqa: E402
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 SERVICE_NAME = "com.victronenergy.watermaker.aquabase"
 SETTINGS_PREFIX = "/Settings/Watermaker/Aquabase"
 ALERT_HOLD_SECONDS = 60
+
+# Venus notification types accepted by com.victronenergy.platform/Notifications/Inject
+NOTIF_WARNING      = 0
+NOTIF_ALARM        = 1
+NOTIF_INFORMATION  = 2
 
 log = logging.getLogger("dbus-aquabase")
 
 
 class AquabaseService:
     def __init__(self, bus: dbus.SystemBus, settings: SettingsDevice):
+        self._bus = bus
         self._svc = VeDbusService(SERVICE_NAME, bus=bus, register=False)
         self._settings = settings
         self._last_state: int | None = None
@@ -121,7 +127,23 @@ class AquabaseService:
         self._svc[f"/Alarms/{name}/State"] = 1
         self._svc[f"/Alarms/{name}/Description"] = description
         log.info("alarm raised: %s — %s", name, description)
+        # Also push to the platform notification centre so it appears on
+        # the GX Notifications tab. Custom alarm names like ours aren't
+        # picked up by venus-platform's hardcoded /Alarms/<name> watcher,
+        # but the /Notifications/Inject action accepts arbitrary text.
+        self._inject_notification(NOTIF_INFORMATION, "Aquabase Watermaker", description)
         GLib.timeout_add_seconds(ALERT_HOLD_SECONDS, self._clear_alarm, name)
+
+    def _inject_notification(self, type_: int, devicename: str, description: str) -> None:
+        # See venus-platform src/notifications.hpp::VeQItemInjectNotification:
+        # value is "<type>\t<devicename>\t<description>" on the
+        # com.victronenergy.platform/Notifications/Inject path.
+        try:
+            obj = self._bus.get_object("com.victronenergy.platform", "/Notifications/Inject")
+            payload = f"{type_}\t{devicename}\t{description}"
+            obj.SetValue(payload, dbus_interface="com.victronenergy.BusItem")
+        except dbus.DBusException as e:
+            log.warning("notification inject failed: %s", e.get_dbus_name())
 
     def _clear_alarm(self, name: str) -> bool:
         self._svc[f"/Alarms/{name}/State"] = 0
