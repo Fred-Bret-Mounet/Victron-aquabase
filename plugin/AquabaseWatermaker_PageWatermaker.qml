@@ -6,6 +6,8 @@ DeviceListPluginPage {
 
 	title: "Watermaker"
 
+	VeQuickItem { id: connectedItem; uid: root.device.serviceUid + "/Connected" }
+
 	GradientListView {
 		model: VisibleItemModel {
 			ListRadioButtonGroup {
@@ -21,8 +23,7 @@ DeviceListPluginPage {
 					{ display: "Start", value: 1, readOnly: stateItem.value !== 0 },
 					{ display: "Wash",  value: 2, readOnly: stateItem.value !== 0 },
 				]
-				VeQuickItem { id: connectedItem; uid: root.device.serviceUid + "/Connected" }
-				VeQuickItem { id: stateItem;     uid: root.device.serviceUid + "/State" }
+				VeQuickItem { id: stateItem; uid: root.device.serviceUid + "/State" }
 			}
 			ListSwitch {
 				text: "Auto-stop"
@@ -60,6 +61,7 @@ DeviceListPluginPage {
 			ListText {
 				text: "State"
 				dataItem.uid: root.device.serviceUid + "/State"
+				preferredVisible: dataItem.valid && connectedItem.value === 1
 				secondaryText: {
 					if (!dataItem.valid) return ""
 					switch (dataItem.value) {
@@ -73,56 +75,56 @@ DeviceListPluginPage {
 			ListText {
 				text: "Flow"
 				dataItem.uid: root.device.serviceUid + "/CurrentFlow"
-				preferredVisible: dataItem.valid
+				preferredVisible: dataItem.valid && connectedItem.value === 1
 				secondaryText: dataItem.valid ? dataItem.value + " L/h" : ""
 			}
 			ListText {
 				text: "Salinity"
 				dataItem.uid: root.device.serviceUid + "/Salinity"
-				preferredVisible: dataItem.valid
+				preferredVisible: dataItem.valid && connectedItem.value === 1
 				secondaryText: dataItem.valid ? dataItem.value + " ppm" : ""
 			}
 			ListText {
 				text: "Salinity threshold"
 				dataItem.uid: root.device.serviceUid + "/SalinityThreshold"
-				preferredVisible: dataItem.valid
+				preferredVisible: dataItem.valid && connectedItem.value === 1
 				secondaryText: dataItem.valid ? dataItem.value + " ppm" : ""
 			}
 			ListText {
 				text: "Quality"
 				dataItem.uid: root.device.serviceUid + "/Quality"
-				preferredVisible: dataItem.valid
+				preferredVisible: dataItem.valid && connectedItem.value === 1
 				secondaryText: dataItem.valid ? (dataItem.value === 1 ? "OK" : "NOK") : ""
 			}
 			ListText {
 				text: "Operating hours"
 				dataItem.uid: root.device.serviceUid + "/HoursOperation"
-				preferredVisible: dataItem.valid
+				preferredVisible: dataItem.valid && connectedItem.value === 1
 				secondaryText: dataItem.valid
 					? Number(dataItem.value).toFixed(1) + " h" : ""
 			}
 			ListText {
 				text: "Model"
 				dataItem.uid: root.device.serviceUid + "/Model"
-				preferredVisible: dataItem.valid && dataItem.value !== ""
+				preferredVisible: dataItem.valid && dataItem.value !== "" && connectedItem.value === 1
 				secondaryText: dataItem.value || ""
 			}
 			ListText {
 				text: "Serial number"
 				dataItem.uid: root.device.serviceUid + "/Serial"
-				preferredVisible: dataItem.valid && dataItem.value !== ""
+				preferredVisible: dataItem.valid && dataItem.value !== "" && connectedItem.value === 1
 				secondaryText: dataItem.value || ""
 			}
 			ListText {
 				text: "Commissioned"
 				dataItem.uid: root.device.serviceUid + "/CommissionDate"
-				preferredVisible: dataItem.valid && dataItem.value !== ""
+				preferredVisible: dataItem.valid && dataItem.value !== "" && connectedItem.value === 1
 				secondaryText: dataItem.value || ""
 			}
 			ListText {
 				text: "Last event"
 				dataItem.uid: root.device.serviceUid + "/LastEventDescription"
-				preferredVisible: dataItem.valid && dataItem.value !== ""
+				preferredVisible: dataItem.valid && dataItem.value !== "" && connectedItem.value === 1
 				secondaryText: dataItem.value || ""
 			}
 
