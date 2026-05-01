@@ -186,6 +186,12 @@ install_service() {
         rm -f "${SERVICE_LINK}"
     fi
     ln -s "${INSTALL_DIR}/service" "${SERVICE_LINK}"
+    # The earlier `svc -d` writes "want=d" into ${INSTALL_DIR}/service/supervise/,
+    # which persists across the symlink recycle and leaves runsv refusing to
+    # start the bridge. Force "want=u" so the service comes back automatically.
+    # Brief sleep gives runsvdir time to notice the new symlink before we send "u".
+    sleep 1
+    svc -u "${SERVICE_LINK}" 2>/dev/null || true
     # rc.local survives firmware updates
     if ! grep -q "Aquabase-watermaker/setup reinstall" /data/rc.local 2>/dev/null; then
         {
