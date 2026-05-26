@@ -28,10 +28,16 @@ from settingsdevice import SettingsDevice            # noqa: E402
 from aquabase import protocol as P                   # noqa: E402
 from aquabase.ble import BleLink                     # noqa: E402
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 SERVICE_NAME = "com.victronenergy.watermaker.aquabase"
 SETTINGS_PREFIX = "/Settings/Watermaker/Aquabase"
 ALERT_HOLD_SECONDS = 60
+# The watermaker peer drops the BLE link ~60 s after the last read; our
+# main loop reconnects within a few seconds. Suppress the spurious
+# /Connected = 0 transitions across that gap so gui-v2 doesn't flip the
+# device into its disconnected delegate (and the user doesn't see the
+# row blink in and out every minute).
+DISCONNECT_GRACE_SECONDS = 90
 
 # Venus notification types accepted by com.victronenergy.platform/Notifications/Inject
 NOTIF_WARNING      = 0
@@ -48,6 +54,7 @@ class AquabaseService:
         self._settings = settings
         self._last_state: int | None = None
         self._link: "BleLink | None" = None
+        self._disconnect_grace_id: int | None = None
         self._add_paths()
         self._svc.register()
 
@@ -173,10 +180,25 @@ class AquabaseService:
 
     # ─── update sinks (called from GLib thread) ──────────────────────────────
     def set_connected(self, connected: bool) -> None:
-        self._svc["/Connected"] = 1 if connected else 0
-        if not connected:
-            self._svc["/State"] = 0
-            self._last_state = None
+        if connected:
+            if self._disconnect_grace_id is not None:
+                GLib.source_remove(self._disconnect_grace_id)
+                self._disconnect_grace_id = None
+            self._svc["/Connected"] = 1
+            return
+        # Defer the disconnected flip — the peer drops the BLE link between
+        # polls but we usually reconnect within seconds.
+        if self._disconnect_grace_id is not None:
+            return
+        self._disconnect_grace_id = GLib.timeout_add_seconds(
+            DISCONNECT_GRACE_SECONDS, self._mark_disconnected)
+
+    def _mark_disconnected(self) -> bool:
+        self._disconnect_grace_id = None
+        self._svc["/Connected"] = 0
+        self._svc["/State"] = 0
+        self._last_state = None
+        return False  # one-shot timer
 
     def _raise_alarm(self, name: str, description: str) -> None:
         self._svc[f"/Alarms/{name}/State"] = 1
