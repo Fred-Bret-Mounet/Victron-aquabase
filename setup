@@ -70,6 +70,8 @@ GUIV2_DELEGATE_DIR="/opt/victronenergy/gui-v2/Victron/VenusOS/pages/settings/dev
 GUIV2_APPS_AVAILABLE="/data/apps/available/aquabase-watermaker"
 GUIV2_APPS_ENABLED="/data/apps/enabled/aquabase-watermaker"
 
+VRMLOGGER_DATALIST="/opt/victronenergy/vrmlogger/datalist.py"
+
 install_gui_legacy() {
     # Legacy gui (Pi etc.) — install QML page + patch PageMain.qml.
     # Detect by service entry: only the legacy gui has /service/gui;
@@ -115,12 +117,7 @@ install_gui_v2() {
        "${GUIV2_APPS_AVAILABLE}/gui-v2/aquabase-watermaker.json"
     [ -L "${GUIV2_APPS_ENABLED}" ] || ln -sf "${GUIV2_APPS_AVAILABLE}" "${GUIV2_APPS_ENABLED}"
     echo "→ gui-v2: plugin manifest installed and enabled"
-    if [ -f "${INSTALL_DIR}/plugin/DeviceListDelegate_watermaker.qml" ] \
-       && [ -d "${GUIV2_DELEGATE_DIR}" ]; then
-        cp "${INSTALL_DIR}/plugin/DeviceListDelegate_watermaker.qml" \
-           "${GUIV2_DELEGATE_DIR}/DeviceListDelegate_watermaker.qml"
-        echo "→ gui-v2: device-list delegate installed"
-    fi
+    install_firmware_patches
     # Publish the manifest to MQTT so the WASM (browser) gui-v2 can load it.
     if python3 -c "import paho.mqtt" 2>/dev/null; then
         python3 "${INSTALL_DIR}/publish_gui_plugin.py" \
@@ -135,6 +132,80 @@ install_gui_v2() {
 install_gui() {
     install_gui_legacy
     install_gui_v2
+}
+
+install_firmware_patches() {
+    # Re-apply patches against /opt/victronenergy/* — these get wiped by
+    # Venus firmware updates and must be restored on every boot via the
+    # rc.local → `setup reinstall` hook installed by install_service.
+    if [ -f "${INSTALL_DIR}/plugin/DeviceListDelegate_watermaker.qml" ] \
+       && [ -d "${GUIV2_DELEGATE_DIR}" ]; then
+        cp "${INSTALL_DIR}/plugin/DeviceListDelegate_watermaker.qml" \
+           "${GUIV2_DELEGATE_DIR}/DeviceListDelegate_watermaker.qml"
+        echo "→ gui-v2: device-list delegate installed"
+    fi
+    patch_vrmlogger_datalist
+}
+
+patch_vrmlogger_datalist() {
+    # vrmlogger only enumerates services whose type is in datalist.py. Without
+    # an entry for com.victronenergy.watermaker the bridge is silently
+    # ignored, so the watermaker never reaches VRM portal / mobile app.
+    # Idempotent: skip if our marker is already present.
+    [ -f "${VRMLOGGER_DATALIST}" ] || { echo "→ vrmlogger: ${VRMLOGGER_DATALIST} missing, skipping"; return 0; }
+    if grep -q "'com.victronenergy.watermaker':" "${VRMLOGGER_DATALIST}"; then
+        echo "→ vrmlogger: datalist.py already patched"
+        return 0
+    fi
+    [ -f "${VRMLOGGER_DATALIST}.stock" ] || cp "${VRMLOGGER_DATALIST}" "${VRMLOGGER_DATALIST}.stock"
+    python3 - "${VRMLOGGER_DATALIST}" <<'PY'
+import sys, re
+p = sys.argv[1]
+src = open(p).read()
+block = """'com.victronenergy.watermaker': {
+\t'/ProductId': {'code': 'wP', 'whenToLog': 'configChange', 'convert': conversions.productid},
+\t'/FirmwareVersion': {'code': 'wv', 'whenToLog': 'configChange', 'convert': conversions.firmware},
+\t'/Serial': {'code': 'wSN', 'whenToLog': 'configChange'},
+\t'/Model': {'code': 'wmod', 'whenToLog': 'configChange'},
+\t'/CommissionDate': {'code': 'wCD', 'whenToLog': 'configChange'},
+\t'/Connected': {'code': 'wC', 'whenToLog': 'onIntervalAlwaysAndOnEvent'},
+\t'/Mode': {'code': 'wM', 'whenToLog': 'onIntervalAlwaysAndOnEvent', 'accessLevel': 'operator'},
+\t'/State': {'code': 'wST', 'whenToLog': 'onIntervalAlwaysAndOnEvent'},
+\t'/CurrentFlow': {'code': 'wfl', 'whenToLog': 'onIntervalAlways', 'precision': 1},
+\t'/Salinity': {'code': 'wsa', 'whenToLog': 'onIntervalAlways'},
+\t'/SalinityThreshold': {'code': 'wsT', 'whenToLog': 'configChange'},
+\t'/Quality': {'code': 'wQ', 'whenToLog': 'onIntervalAlwaysAndOnEvent'},
+\t'/HoursOperation': {'code': 'wH', 'whenToLog': 'onIntervalAlways', 'precision': 1},
+\t'/LastEventCode': {'code': 'wlec', 'whenToLog': 'onIntervalAlwaysAndOnEvent'},
+\t'/LastEventDescription': {'code': 'wled', 'whenToLog': 'onIntervalAlwaysAndOnEvent'},
+\t'/AutoStop/Enabled': {'code': 'wAE', 'whenToLog': 'configChange'},
+\t'/AutoStop/Mode': {'code': 'wAM', 'whenToLog': 'configChange'},
+\t'/AutoStop/Target': {'code': 'wAT', 'whenToLog': 'configChange'},
+\t'/Alarms/StartEvent/State': {'code': 'wAs', 'whenToLog': 'onIntervalAlwaysAndOnEvent'},
+\t'/Alarms/StopEvent/State': {'code': 'wAp', 'whenToLog': 'onIntervalAlwaysAndOnEvent'},
+\t'/Alarms/WashEvent/State': {'code': 'wAw', 'whenToLog': 'onIntervalAlwaysAndOnEvent'},
+},
+"""
+m = re.search(r"^'com\.victronenergy\.tank':\s*\{[^}]*\},\s*$", src, re.MULTILINE)
+if not m:
+    sys.exit("could not locate com.victronenergy.tank block in datalist.py")
+open(p, "w").write(src[:m.end()] + "\n" + block + src[m.end():])
+print("patched")
+PY
+    echo "→ vrmlogger: datalist.py patched with com.victronenergy.watermaker (backup: ${VRMLOGGER_DATALIST}.stock)"
+}
+
+unpatch_vrmlogger_datalist() {
+    [ -f "${VRMLOGGER_DATALIST}.stock" ] || return 0
+    cp "${VRMLOGGER_DATALIST}.stock" "${VRMLOGGER_DATALIST}"
+    rm -f "${VRMLOGGER_DATALIST}.stock"
+    echo "→ vrmlogger: datalist.py restored from .stock"
+}
+
+restart_vrmlogger() {
+    [ -e /service/vrmlogger ] || return 0
+    echo "→ restarting vrmlogger"
+    svc -t /service/vrmlogger
 }
 
 restart_gui() {
@@ -222,18 +293,25 @@ case "${1:-}" in
         write_mac_setting "${2:-}"
         install_service
         install_gui
+        restart_vrmlogger
         restart_gui
         echo "✓ installed. tail logs with: tail -F /var/log/dbus-aquabase/current"
         ;;
     reinstall)
-        # Used by rc.local on boot — service link only, no pip install.
+        # Used by rc.local on boot — restore service link + /opt patches that
+        # Venus firmware updates wipe. /data/* paths persist and don't need
+        # re-staging.
         require_root "$@"
         install_service
+        install_firmware_patches
+        restart_vrmlogger
         ;;
     uninstall)
         require_root "$@"
         remove_service
         remove_gui
+        unpatch_vrmlogger_datalist
+        restart_vrmlogger
         restart_gui
         echo "✓ removed service link + GUI patches. files left in ${INSTALL_DIR}."
         ;;
@@ -241,6 +319,8 @@ case "${1:-}" in
         require_root "$@"
         remove_service
         remove_gui
+        unpatch_vrmlogger_datalist
+        restart_vrmlogger
         restart_gui
         rm -rf "${INSTALL_DIR}"
         echo "✓ purged ${INSTALL_DIR}"
